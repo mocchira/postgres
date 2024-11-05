@@ -23,24 +23,6 @@ import type { ParseArrayFunction } from "../query/array_parser.ts";
  */
 export type ConnectionString = string;
 
-/**
- * Retrieves the connection options from the environmental variables
- * as they are, without any extra parsing
- *
- * It will throw if no env permission was provided on startup
- */
-function getPgEnv(): ClientOptions {
-  return {
-    applicationName: Deno.env.get("PGAPPNAME"),
-    database: Deno.env.get("PGDATABASE"),
-    hostname: Deno.env.get("PGHOST"),
-    options: Deno.env.get("PGOPTIONS"),
-    password: Deno.env.get("PGPASSWORD"),
-    port: Deno.env.get("PGPORT"),
-    user: Deno.env.get("PGUSER"),
-  };
-}
-
 /** Additional granular database connection options */
 export interface ConnectionOptions {
   /**
@@ -416,16 +398,7 @@ export function createParams(
   }
 
   let pgEnv: ClientOptions = {};
-  let has_env_access = true;
-  try {
-    pgEnv = getPgEnv();
-  } catch (e) {
-    if (e instanceof Deno.errors.PermissionDenied) {
-      has_env_access = false;
-    } else {
-      throw e;
-    }
-  }
+  let has_env_access = false;
 
   const provided_host = params.hostname ?? pgEnv.hostname;
 
@@ -441,14 +414,7 @@ export function createParams(
     const socket = provided_host ?? DEFAULT_OPTIONS.socket;
     try {
       if (!isAbsolute(socket)) {
-        const parsed_host = new URL(socket, Deno.mainModule);
-
-        // Resolve relative path
-        if (parsed_host.protocol === "file:") {
-          host = fromFileUrl(parsed_host);
-        } else {
-          throw new Error("The provided host is not a file path");
-        }
+        throw new Error("The relative path for provided host is not supported");
       } else {
         host = socket;
       }

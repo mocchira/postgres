@@ -129,7 +129,7 @@ const encoder = new TextEncoder();
 export class Connection {
   #bufReader!: BufReader;
   #bufWriter!: BufWriter;
-  #conn!: Deno.Conn;
+  #conn!: net.Conn;
   connected = false;
   #connection_params: ClientConfiguration;
   #message_header = new Uint8Array(5);
@@ -263,42 +263,16 @@ export class Connection {
   async #openConnection(options: ConnectOptions) {
     // @ts-expect-error This will throw in runtime if the options passed to it are socket related and deno is running
     // on stable
-    this.#conn = await Deno.connect(options);
+    this.#conn = await net.connect(options);
     this.#bufWriter = new BufWriter(this.#conn);
     this.#bufReader = new BufReader(this.#conn);
   }
 
-  async #openSocketConnection(path: string, port: number) {
-    if (Deno.build.os === "windows") {
-      throw new Error("Socket connection is only available on UNIX systems");
-    }
-    const socket = await Deno.stat(path);
-
-    if (socket.isFile) {
-      await this.#openConnection({ path, transport: "unix" });
-    } else {
-      const socket_guess = joinPath(path, getSocketName(port));
-      try {
-        await this.#openConnection({
-          path: socket_guess,
-          transport: "unix",
-        });
-      } catch (e) {
-        if (e instanceof Deno.errors.NotFound) {
-          throw new ConnectionError(
-            `Could not open socket in path "${socket_guess}"`,
-          );
-        }
-        throw e;
-      }
-    }
-  }
-
   async #openTlsConnection(
-    connection: Deno.TcpConn,
+    connection: net.TcpConn,
     options: { hostname: string; caCerts: string[] },
   ) {
-    this.#conn = await Deno.startTls(connection, options);
+    this.#conn = await tls.startTls(connection, options);
     this.#bufWriter = new BufWriter(this.#conn);
     this.#bufReader = new BufReader(this.#conn);
   }
@@ -334,9 +308,7 @@ export class Connection {
     } = this.#connection_params;
 
     if (host_type === "socket") {
-      await this.#openSocketConnection(hostname, port);
-      this.#tls = undefined;
-      this.#transport = "socket";
+      throw new Error("socket type is not supported");
     } else {
       // A BufWriter needs to be available in order to check if the server accepts TLS connections
       await this.#openConnection({ hostname, port, transport: "tcp" });
@@ -356,7 +328,7 @@ export class Connection {
           try {
             // TODO: handle connection type without castinggaa
             // https://github.com/denoland/deno/issues/10200
-            await this.#openTlsConnection(this.#conn as Deno.TcpConn, {
+            await this.#openTlsConnection(this.#conn as net.TcpConn, {
               hostname,
               caCerts: caCertificates,
             });
@@ -392,27 +364,7 @@ export class Connection {
       } catch (e) {
         // Make sure to close the connection before erroring or reseting
         this.#closeConnection();
-        if (e instanceof Deno.errors.InvalidData && tls_enabled) {
-          if (tls_enforced) {
-            throw new Error(
-              "The certificate used to secure the TLS connection is invalid: " +
-                e.message,
-            );
-          } else {
-            console.error(
-              bold(yellow("TLS connection failed with message: ")) +
-                e.message +
-                "\n" +
-                bold("Defaulting to non-encrypted connection"),
-            );
-            await this.#openConnection({ hostname, port, transport: "tcp" });
-            this.#tls = false;
-            this.#transport = "tcp";
-            startup_response = await this.#sendStartupMessage();
-          }
-        } else {
-          throw e;
-        }
+        throw e;
       }
       assertSuccessfulStartup(startup_response);
       await this.#authenticate(startup_response);
